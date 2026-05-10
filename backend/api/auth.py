@@ -15,7 +15,7 @@ SECRET_KEY   = os.getenv("JWT_SECRET", "changeme-use-a-long-random-string")
 ALGORITHM    = "HS256"
 TOKEN_EXPIRE = 60 * 24 * 7  # 7 days
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 oauth2  = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 class RegisterRequest(BaseModel):
