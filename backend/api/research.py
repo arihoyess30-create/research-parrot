@@ -125,15 +125,13 @@ def generate_outline(body: OutlineRequest, db: Session = Depends(get_db),
     proj = db.query(Project).filter_by(id=body.project_id, user_id=user.id).first()
     if not proj:
         raise HTTPException(404, "Project not found")
- try:
+    try:
         raw = generate_text(build_outline_prompt(proj), max_tokens=1500)
-        # Strip markdown fences and any leading/trailing text
         raw = raw.strip()
         if "```" in raw:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        # Find the JSON object within the response
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start == -1 or end == 0:
@@ -145,7 +143,7 @@ def generate_outline(body: OutlineRequest, db: Session = Depends(get_db),
     except Exception as e:
         raise HTTPException(500, f"AI generation error: {str(e)}")
     proj.outline = json.dumps(outline)
-    proj.title   = outline.get("title", proj.title)
+    proj.title = outline.get("title", proj.title)
     db.commit()
     return outline
 
@@ -155,7 +153,7 @@ def generate_section(body: SectionRequest, db: Session = Depends(get_db),
     proj = db.query(Project).filter_by(id=body.project_id, user_id=user.id).first()
     if not proj or not proj.outline:
         raise HTTPException(400, "Project or outline not found")
-    outline  = json.loads(proj.outline)
+    outline = json.loads(proj.outline)
     chapters = outline.get("chapters", [])
     if body.chapter < 1 or body.chapter > len(chapters):
         raise HTTPException(400, "Invalid chapter index")
@@ -210,9 +208,3 @@ def get_project(project_id: str, db: Session = Depends(get_db),
         "is_paid": proj.is_paid, "citation_style": proj.citation_style,
         "level": proj.level,
     }
-           
-
-
-
-
-
