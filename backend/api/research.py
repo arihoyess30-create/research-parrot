@@ -125,13 +125,23 @@ def generate_outline(body: OutlineRequest, db: Session = Depends(get_db),
     proj = db.query(Project).filter_by(id=body.project_id, user_id=user.id).first()
     if not proj:
         raise HTTPException(404, "Project not found")
-    try:
+ try:
         raw = generate_text(build_outline_prompt(proj), max_tokens=1500)
-        # Strip markdown fences if Gemini adds them
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        # Strip markdown fences and any leading/trailing text
+        raw = raw.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        # Find the JSON object within the response
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            raise ValueError("No JSON found in response")
+        raw = raw[start:end]
         outline = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "Failed to parse outline from AI. Please try again.")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, f"Failed to parse outline from AI: {str(e)}")
     except Exception as e:
         raise HTTPException(500, f"AI generation error: {str(e)}")
     proj.outline = json.dumps(outline)
