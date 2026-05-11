@@ -200,5 +200,9 @@ def get_project(project_id: str, db: Session = Depends(get_db),
         "is_paid": proj.is_paid, "citation_style": proj.citation_style,
         "level": proj.level,
     }
-            "sections": sections, "status": proj.status,
-            "is_paid": proj.is_paid, "citation_style": proj.citation_style, "level": proj.level}
+           
+
+
+
+
+
