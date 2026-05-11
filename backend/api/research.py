@@ -1,4 +1,5 @@
-import anthropic, json
+import google.generativeai as genai
+import os, json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -8,9 +9,11 @@ from models import Project, User
 from api.auth import get_current_user
 
 router = APIRouter()
-client = anthropic.Anthropic()
 
-SYSTEM_PROMPT = """You are an expert academic research assistant specialising in Ugandan and East African
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction="""You are an expert academic research assistant specialising in Ugandan and East African
 contexts. You write in a formal, scholarly tone appropriate for university-level research.
 When generating content:
 - Use real, verifiable academic references (authors, years, journals)
@@ -18,10 +21,14 @@ When generating content:
   UBOS, Ministry of Health, etc.) and real place names (Kampala, Gulu, Mbarara, etc.)
 - Insert citation placeholders in the requested style
 - Structure paragraphs clearly: claim, evidence, analysis
-- Write at the specified academic level
-"""
+- Write at the specified academic level"""
+)
 
-CITATION_FORMATS = {"APA": "APA 7th Edition", "MLA": "MLA 9th Edition", "Harvard": "Harvard Referencing System"}
+CITATION_FORMATS = {
+    "APA":     "APA 7th Edition",
+    "MLA":     "MLA 9th Edition",
+    "Harvard": "Harvard Referencing System",
+}
 
 class ProjectCreate(BaseModel):
     topic: str
@@ -59,7 +66,7 @@ Return a JSON object with this exact structure:
     }}
   ]
 }}
-Return only the JSON, no markdown fences."""
+Return only the JSON, no markdown fences, no extra text."""
 
 def build_section_prompt(p, chapter_obj, all_chapters):
     qs = json.loads(p.questions) if isinstance(p.questions, str) else p.questions
@@ -89,7 +96,17 @@ Instructions:
 - Use formal academic English appropriate for {p.level} level
 - End with a transition sentence to the next chapter
 
-Write the full chapter content only."""
+Write the full chapter content only, no headings outside the section structure."""
+
+def generate_text(prompt: str, max_tokens: int = 2000) -> str:
+    response = model.generate_content(
+        prompt,
+        generation_config=genai.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=0.7,
+        )
+    )
+    return response.text.strip()
 
 @router.post("/projects")
 def create_project(body: ProjectCreate, db: Session = Depends(get_db),
@@ -106,16 +123,17 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db),
 def generate_outline(body: OutlineRequest, db: Session = Depends(get_db),
                      user: User = Depends(get_current_user)):
     proj = db.query(Project).filter_by(id=body.project_id, user_id=user.id).first()
-    if not proj: raise HTTPException(404, "Project not found")
-    msg = client.messages.create(
-        model="claude-sonnet-4-20250514", max_tokens=1500,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_outline_prompt(proj)}],
-    )
+    if not proj:
+        raise HTTPException(404, "Project not found")
     try:
-        outline = json.loads(msg.content[0].text.strip())
+        raw = generate_text(build_outline_prompt(proj), max_tokens=1500)
+        # Strip markdown fences if Gemini adds them
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        outline = json.loads(raw)
     except json.JSONDecodeError:
-        raise HTTPException(500, "Failed to parse outline")
+        raise HTTPException(500, "Failed to parse outline from AI. Please try again.")
+    except Exception as e:
+        raise HTTPException(500, f"AI generation error: {str(e)}")
     proj.outline = json.dumps(outline)
     proj.title   = outline.get("title", proj.title)
     db.commit()
@@ -139,38 +157,48 @@ def generate_section(body: SectionRequest, db: Session = Depends(get_db),
         proj.sections = json.dumps(secs)
         db.commit()
     chapter_obj = chapters[body.chapter - 1]
-    msg = client.messages.create(
-        model="claude-sonnet-4-20250514", max_tokens=2500,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_section_prompt(proj, chapter_obj, chapters)}],
-    )
-    content = msg.content[0].text.strip()
+    try:
+        content = generate_text(build_section_prompt(proj, chapter_obj, chapters), max_tokens=2500)
+    except Exception as e:
+        raise HTTPException(500, f"AI generation error: {str(e)}")
     secs = json.loads(proj.sections) if proj.sections else {}
     secs[str(body.chapter)] = content
     proj.sections = json.dumps(secs)
     if body.chapter == len(chapters):
         proj.status = "complete"
     db.commit()
-    return {"chapter": body.chapter, "title": chapter_obj["title"],
-            "content": content, "is_last": body.chapter == len(chapters)}
+    return {
+        "chapter": body.chapter,
+        "title": chapter_obj["title"],
+        "content": content,
+        "is_last": body.chapter == len(chapters),
+    }
 
 @router.get("/projects")
 def list_projects(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     projs = db.query(Project).filter_by(user_id=user.id).order_by(Project.created_at.desc()).all()
-    return [{"id": p.id, "title": p.title, "field": p.field, "level": p.level,
-             "citation_style": p.citation_style, "pages": p.pages,
-             "status": p.status, "is_paid": p.is_paid, "created_at": p.created_at}
-            for p in projs]
+    return [
+        {"id": p.id, "title": p.title, "field": p.field, "level": p.level,
+         "citation_style": p.citation_style, "pages": p.pages,
+         "status": p.status, "is_paid": p.is_paid, "created_at": p.created_at}
+        for p in projs
+    ]
 
 @router.get("/projects/{project_id}")
 def get_project(project_id: str, db: Session = Depends(get_db),
                 user: User = Depends(get_current_user)):
     proj = db.query(Project).filter_by(id=project_id, user_id=user.id).first()
-    if not proj: raise HTTPException(404, "Not found")
+    if not proj:
+        raise HTTPException(404, "Not found")
     sections = json.loads(proj.sections) if proj.sections else {}
     if not proj.is_paid:
         sections = {k: v for k, v in sections.items() if int(k) <= 2}
-    return {"id": proj.id, "title": proj.title, "topic": proj.topic,
-            "outline": json.loads(proj.outline) if proj.outline else None,
+    return {
+        "id": proj.id, "title": proj.title, "topic": proj.topic,
+        "outline": json.loads(proj.outline) if proj.outline else None,
+        "sections": sections, "status": proj.status,
+        "is_paid": proj.is_paid, "citation_style": proj.citation_style,
+        "level": proj.level,
+    }
             "sections": sections, "status": proj.status,
             "is_paid": proj.is_paid, "citation_style": proj.citation_style, "level": proj.level}
