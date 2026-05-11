@@ -12,7 +12,7 @@ router = APIRouter()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
+    model_name="gemini-2.5-flash-lite",
     system_instruction="""You are an expert academic research assistant specialising in Ugandan and East African
 contexts. You write in a formal, scholarly tone appropriate for university-level research.
 When generating content:
